@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+spring:
+  http:
+    client:
+      # The JDK client attempts an h2c upgrade that uvicorn rejects; plain HTTP/1.1 avoids it.
+      factory: simple
+      connect-timeout: 5s
+      # Claude-backed planning can take a while; keep this generous.
+      read-timeout: 180s
+
+agent-service:
+  base-url: ${AGENT_SERVICE_URL:http://localhost:8000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

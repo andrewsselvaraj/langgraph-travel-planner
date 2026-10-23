@@ -1,0 +1,15 @@
+services:
+  agent-service:
+    build: ./agent-service
+    env_file: .env
+    ports:
+      - "8000:8000"
+
+  customer-api:
+    build: ./customer-api
+    environment:
+      AGENT_SERVICE_URL: http://agent-service:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - agent-service
