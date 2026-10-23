@@ -1,63 +1,55 @@
-# LangGraph Travel Planner
+# LangGraph Travel Planner (Java / Spring Boot)
 
-A customer-facing, multi-agent travel planner.
+A customer-facing, multi-agent travel planner written entirely in Java:
+**Spring Boot 3.5** for the REST API, **[LangGraph4j](https://github.com/langgraph4j/langgraph4j)**
+(the Java port of LangGraph) for the agent graph, and the **Anthropic Java SDK**
+so Claude can write itineraries.
 
 ```
-Customer ──► Spring Boot customer-api (:8080) ──► LangGraph agent-service (:8000)
-                /api/v1/trips                        POST /plan
-                                                         │
-                                                    ┌────┴─────┐
-                                                    │supervisor│◄──────────────┐
-                                                    └────┬─────┘               │
-                     ┌──────────────┬──────────────┬─────┴────────┐            │
-                flight_agent   hotel_agent   itinerary_agent  budget_agent ────┘
-                                                         │
-                                                      finalize
+Customer ──► POST /api/v1/trips ──► TripService ──► TripPlannerGraph (LangGraph4j)
+                                                        │
+                                                   ┌────┴─────┐
+                                         START ──► │supervisor│◄────────────────┐
+                                                   └────┬─────┘                 │
+                        ┌──────────────┬──────────────┬─┴────────────┐          │
+                   flight_agent   hotel_agent   itinerary_agent  budget_agent ──┘
+                                                        │
+                                                    finalize ──► END
 ```
 
-## How the agents work
+## The agents
 
-| Agent | Job |
-|---|---|
-| **supervisor** | Looks at what the plan still lacks and routes to the next specialist. Loops until the plan is complete. |
-| **flight_agent** | Searches flights and picks the best value (cheapest, preferring fewer stops within 15%). |
-| **hotel_agent** | Picks the highest-rated hotel that fits ~40% of the budget, under the current star ceiling. |
-| **itinerary_agent** | Builds a day-by-day plan with Claude (`claude-opus-5-5`); falls back to a rule-based planner offline. |
-| **budget_agent** | Totals flights, hotel, activities, food/transport. If over budget, it lowers the hotel star ceiling and the supervisor sends the hotel agent back for a cheaper stay. |
-| **finalize** | Writes the customer-facing summary (polished by Claude when available). |
+| Agent | Class | Job |
+|---|---|---|
+| **supervisor** | `Supervisor` | Looks at what the plan still lacks and routes to the next specialist, looping until the plan is complete. |
+| **flight_agent** | `FlightAgent` | Searches flights and picks the best value (cheapest, preferring fewer stops within 15%). |
+| **hotel_agent** | `HotelAgent` | Picks the highest-rated hotel that fits ~40% of the budget under the current star ceiling; on a budget revision it picks the cheapest. |
+| **itinerary_agent** | `ItineraryAgent` | Builds a day-by-day plan with Claude (`claude-opus-5-5`, structured JSON output); falls back to a rule-based planner offline. |
+| **budget_agent** | `BudgetAgent` | Totals flights, hotel, activities, food and transport. If over budget it lowers the hotel star ceiling and the supervisor sends the hotel agent back. |
+| **finalize** | `Finalizer` | Writes the customer-facing summary (polished by Claude when available). |
 
-Flight and hotel data come from deterministic mock providers in
-`agent-service/app/tools.py`; replace those functions with real APIs
-(Amadeus, Skyscanner, Booking.com, ...).
+All agents live in `src/main/java/com/travelplanner/agent`. Flight and hotel
+data come from the deterministic mock in `TravelInventory`; replace its two
+methods with real providers (Amadeus, Skyscanner, Booking.com, ...).
 
-## Run locally
+## Run
 
-### 1. Agent service (Python 3.11+)
+Requires Java 21 and Maven.
 
 ```bash
-cd agent-service
-python -m venv .venv
-# Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
-pip install -r requirements-dev.txt
-# Optional: set ANTHROPIC_API_KEY to let Claude write itineraries
-uvicorn app.main:app --port 8000
-```
-
-### 2. Customer API (Java 21, Maven)
-
-```bash
-cd customer-api
+# Optional: let Claude write itineraries. Without a key the agents run offline.
+export ANTHROPIC_API_KEY=sk-ant-...        # Windows PowerShell: $env:ANTHROPIC_API_KEY="sk-ant-..."
 mvn spring-boot:run
 ```
 
-### Or both with Docker
+Or with Docker:
 
 ```bash
-cp .env.example .env   # add ANTHROPIC_API_KEY if you have one
-docker compose up --build
+docker build -t travel-planner .
+docker run -p 8080:8080 -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY travel-planner
 ```
 
-## Customer API
+## API
 
 | Method | Path | Description |
 |---|---|---|
@@ -81,24 +73,22 @@ curl -X POST localhost:8080/api/v1/trips -H "Content-Type: application/json" -d 
 }'
 ```
 
-The response includes the chosen flight and hotel, the itinerary, a budget
-breakdown, a `status` of `READY` or `OVER_BUDGET`, and a `trace` showing
-each agent's decision. Errors use RFC 7807 problem details (400 for invalid
-input, 404 for unknown trips, 502 when the agent service is down).
+The response holds the chosen flight and hotel, the itinerary, a budget
+breakdown, a `status` of `READY` or `OVER_BUDGET`, and a `trace` of each
+agent's decision. Errors use RFC 7807 problem details (400 for invalid input,
+404 for unknown trips, 503 if planning fails). Trips are kept in memory;
+swap the map in `TripService` for a JPA repository to persist them.
+
+## Configuration
+
+| Environment variable | Default |
+|---|---|
+| `ANTHROPIC_API_KEY` | unset (offline mode) |
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` |
+| `ANTHROPIC_EFFORT` | `medium` |
 
 ## Tests
 
 ```bash
-cd agent-service && pytest
-cd customer-api && mvn test
+mvn test
 ```
-
-## Configuration
-
-| Variable | Service | Default |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | agent-service | unset (offline mode) |
-| `ANTHROPIC_MODEL` | agent-service | `claude-opus-5-5` |
-| `ANTHROPIC_EFFORT` | agent-service | `medium` |
-| `TRAVEL_PLANNER_OFFLINE` | agent-service | set to `1` to force offline mode |
-| `AGENT_SERVICE_URL` | customer-api | `http://localhost:8000` |

@@ -1,0 +1,15 @@
+server:
+  port: 8080
+
+travel-planner:
+  claude:
+    # Leave ANTHROPIC_API_KEY unset to run the agents offline with rule-based fallbacks.
+    api-key: ${ANTHROPIC_API_KEY:}
+    model: ${ANTHROPIC_MODEL:claude-opus-5-5}
+    effort: ${ANTHROPIC_EFFORT:medium}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
